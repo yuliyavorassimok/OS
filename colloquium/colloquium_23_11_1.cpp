@@ -1,104 +1,127 @@
 ﻿#include <iostream>
 #include <fstream>
 #include <vector>
-#include <string>
 #include <thread>
 #include <mutex>
+#include <cmath>
+#include <sstream>
 
-// Интерфейс стратегии для выполнения действия над числами
-class ActionStrategy {
+class Action {
 public:
-    virtual float execute(const std::vector<float>& numbers) const = 0;
-    virtual ~ActionStrategy() {}
+    virtual double perform(const std::vector<double>& numbers) const = 0;
+    virtual ~Action() = default;
 };
 
-// Конкретная стратегия для сложения
-class AdditionStrategy : public ActionStrategy {
+class Addition : public Action {
 public:
-    float execute(const std::vector<float>& numbers) const override {
-        float sum = 0.0f;
-        for (float num : numbers) {
-            sum += num;
+    double perform(const std::vector<double>& numbers) const override {
+        double result = 0;
+        for (double num : numbers) {
+            result += num;
         }
-        return sum;
+        return result;
     }
 };
 
-// Конкретная стратегия для умножения
-class MultiplicationStrategy : public ActionStrategy {
+class Multiplication : public Action {
 public:
-    float execute(const std::vector<float>& numbers) const override {
-        float result = 1.0f;
-        for (float num : numbers) {
+    double perform(const std::vector<double>& numbers) const override {
+        double result = 1;
+        for (double num : numbers) {
             result *= num;
         }
         return result;
     }
 };
 
-// Конкретная стратегия для суммы квадратов
-class SquareSumStrategy : public ActionStrategy {
+class SquareSum : public Action {
 public:
-    float execute(const std::vector<float>& numbers) const override {
-        float sum = 0.0f;
-        for (float num : numbers) {
-            sum += num * num;
+    double perform(const std::vector<double>& numbers) const override {
+        double result = 0;
+        for (double num : numbers) {
+            result += std::pow(num, 2);
         }
-        return sum;
+        return result;
     }
 };
 
-// Функция, выполняемая в отдельном потоке для обработки одного файла
-void processFile(const std::string& filename, const ActionStrategy& strategy, float& result, std::mutex& mutex) {
+void processFile(const std::string& filename, const Action& action, double& result, std::mutex& mutex) {
     std::ifstream file(filename);
     if (file.is_open()) {
-        std::vector<float> numbers;
-        float num;
+        std::vector<double> numbers;
+        double num;
         while (file >> num) {
             numbers.push_back(num);
         }
         file.close();
 
-        float partialResult = strategy.execute(numbers);
+        double partialResult = action.perform(numbers);
 
         std::lock_guard<std::mutex> lock(mutex);
         result += partialResult;
     }
+    else {
+        std::cerr << "Error opening file: " << filename << std::endl;
+    }
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cout << "Usage: ./program <directory> <num_threads>\n";
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <directory_path> <num_threads>" << std::endl;
         return 1;
     }
 
-    std::string directory = argv[1];
+    std::string directoryPath = argv[1];
     int numThreads = std::stoi(argv[2]);
 
-    std::vector<std::thread> threads;
-    std::mutex mutex;
-    float finalResult = 0.0f;
+    Addition addition;
+    Multiplication multiplication;
+    SquareSum squareSum;
 
-    // Создание потоков для обработки файлов
+    std::vector<std::thread> threads;
+    double totalResult = 0;
+    std::mutex resultMutex;
+
     for (int i = 1; i <= numThreads; ++i) {
-        std::string filename = directory + "/in_" + std::to_string(i) + ".dat";
-        threads.emplace_back(processFile, filename, AdditionStrategy(), std::ref(finalResult), std::ref(mutex));
+        std::string filename = directoryPath + "/in_" + std::to_string(i) + ".dat";
+        int actionType = i % 3 + 1;
+
+        const Action* action = nullptr; // Добавляем значение по умолчанию
+
+        switch (actionType) {
+        case 1:
+            action = &addition;
+            break;
+        case 2:
+            action = &multiplication;
+            break;
+        case 3:
+            action = &squareSum;
+            break;
+        }
+
+        // Проверка, что переменная action инициализирована
+        if (!action) {
+            std::cerr << "Error: Unsupported action type." << std::endl;
+            return 1;
+        }
+
+        threads.emplace_back(processFile, filename, std::ref(*action), std::ref(totalResult), std::ref(resultMutex));
     }
 
-    // Ожидание завершения всех потоков
-    for (auto& thread : threads) {
+    for (std::thread& thread : threads) {
         thread.join();
     }
 
-    // Запись результата в файл out.dat
-    std::ofstream outFile(directory + "/out.dat");
+    std::ofstream outFile(directoryPath + "/out.dat");
     if (outFile.is_open()) {
-        outFile << finalResult;
+        std::stringstream resultStream;
+        resultStream << "Total Result: " << totalResult << std::endl;
+        outFile << resultStream.str();
         outFile.close();
-        std::cout << "Result has been written to out.dat\n";
     }
     else {
-        std::cout << "Failed to open out.dat for writing\n";
+        std::cerr << "Error opening output file." << std::endl;
         return 1;
     }
 
